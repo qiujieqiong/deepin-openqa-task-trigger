@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+# encoding: utf-8
+
+import argparse
+import configparser
+import json
+import re
+import os
+import subprocess
+import sys
+
+from urllib import request
+from urllib.error import URLError
+
+HOST = ""
+FETCH_ISO = False
+LATEST_BUILD = False
+
+CLIENT_PATH = "/usr/share/openqa/script/client"
+ISOTOVIDEO_PATH = "/usr/lib/os-autoinst/isotovideo"
+DEFAULT_ENVS_CONF_PATH = "/etc/openqa/deepin.ini"
+ISO_FACTORY = "/var/lib/openqa/share/factory/iso"
+
+"""
+http://cdimage  is a iso warehouse base on internal network
+"""
+
+def resultToJsonStr(result):
+    if len(result) < 2:  # at least "{}"
+        return
+    result = result.decode("utf-8")
+    jsonStr = result.replace(r'\"', '"')[1:-2]
+    return jsonStr
+
+
+
+def initParams(params):
+
+    params = params.strip()
+    envs = dict([(p.split("=")[0].strip(), p.split("=")[1].strip()) for p in params.split(" ") if "=" in p])
+
+    # distri must deepin
+    envs["DISTRI"] = "deepin"
+
+    if "VERSION" not in envs:
+        envs["VERSION"] = "2015"
+
+    if "FLAVOR" not in envs:
+        envs["FLAVOR"] = "SID-DVD"
+
+    if "ARCH" not in envs:
+        arch = getDefaultParam("ARCH")
+        if arch:
+            envs["ARCH"] = arch
+        else:
+            envs["ARCH"] = "x86_64"
+
+    if "BUILD" not in envs:
+        build = getDefaultParam("BUILD")
+        if LATEST_BUILD:
+            arch="amd64" if envs.get("ARCH") == "x86_64" else "i386"
+            build = getLatestBuildDate()
+
+        if not build:
+            print("W: BULID env is not specified")
+
+        envs["BUILD"] = build
+
+    if "ISO" not in envs:
+        build = envs.get("BUILD")
+        if build:
+            iso = "deepin-sid-amd64%s%s.iso" % ("_",  build)
+        else:
+            iso = "deepin-sid-amd64.iso"
+        envs["ISO"] = iso
+
+    paramDict = getExtensionParams()
+    for (k, v) in paramDict.items():
+        k = k.upper()
+        if k not in envs:
+            envs[k] = v
+
+    return envs
+
+
+defaultParamsConfig = None
+def getDefaultParam(key):
+
+    global defaultParamsConfig
+    if not defaultParamsConfig:
+        if not os.path.exists(DEFAULT_ENVS_CONF_PATH):
+            return ""
+        defaultParamsConfig = configparser.ConfigParser()
+        defaultParamsConfig.read(DEFAULT_ENVS_CONF_PATH)
+
+    if key in defaultParamsConfig["DEFAULT"]:
+        return defaultParamsConfig["DEFAULT"][key]
+
+    return ""
+
+
+def getExtensionParams():
+
+    params = {}
+
+    if not os.path.exists(DEFAULT_ENVS_CONF_PATH):
+        return params
+    config = configparser.ConfigParser()
+    config.read(DEFAULT_ENVS_CONF_PATH)
+
+    section = "EXTENSION"
+    items = config.items(section)
+    for (k, v) in items:
+        params[k] = v
+
+    return params
+
+def getLatestBuildDate(arch="amd64"):
+
+    d = "20151110"
+
+    dailyLiveUrl = "http://cdimage/daily-live-sid"
+    try:
+        resp = request.urlopen(dailyLiveUrl)
+        print("back....")
+        data = resp.read().decode("utf-8")
+    except URLError as e:
+        print("E: get latest build data error")
+        print (e)
+
+        # return an exist building date
+        return d
+
+    a = re.compile(">(\d+)/<")
+
+    # get an available url
+    allDaily = a.findall(data)
+    allDaily.reverse()
+    for i in allDaily:
+        try:
+            url = "%s/%s/deepin-sid-%s.iso" % (dailyLiveUrl, i, arch)
+            request.urlopen(url)
+            d = i
+            break
+        except URLError as e:
+            continue
+
+    return d
+
+
+def fetchISO(envs):
+    build = envs.get("BUILD")
+    os.system("curl http://cdimage/daily-live-sid/%s/deepin-sid-amd64.iso \
+            -o %s/deepin-sid-amd64_%s.iso" % (build, ISO_FACTORY, build))
+
+
+def scheduledJobs(params):
+    cmds = []
+    cmds.append(CLIENT_PATH)
+    cmds.append("--host")
+    cmds.append(HOST)
+    cmds.append("isos")
+    cmds.append("post")
+    for (k, v) in params.items():
+        item = "%s=%s" %(k, v)
+        cmds.append(item)
+
+    print (" ".join(cmds))
+
+    # execute
+    try:
+        result = subprocess.check_output(cmds)
+    except subprocess.CalledProcessError as e:
+        print ("E:", e)
+        result = e.output.decode()
+        print ("output: ", result)
+        quit(-1)
+
+    result = result.decode("utf-8")
+    print ("output: ", result)
+
+    # tmp: abort parsing result, because the perl hash output don't match json format
+    return 0
+
+    jsonStr = resultToJsonStr(result)
+
+    if (jsonStr == None):
+        print("Get a null result from server when scheduled jobs, abort.")
+        quit(-1)
+
+    jsonData = json.loads(jsonStr)
+    jobIds = jsonData.get("ids")
+
+    if len(jobIds) == 0:
+        print("No job has been created, please check your params for Startup")
+        quit(-1)
+
+    print("scheduled Result:", jsonStr)
+
+    return jobIds
+
+
+def startWorker():
+    cmds = []
+    cmds.append("/usr/share/openqa/script/worker")
+    cmds.append("--instance")
+    cmds.append("1")
+    cmds.append("--isotovideo")
+    cmds.append(ISOTOVIDEO_PATH)
+    #cmds.append("--no-cleanup")
+    try:
+        subprocess.check_call(cmds, stdout=sys.stdout)
+    except subprocess.CalledProcessError as e:
+        print (e)
+        print ("output: ", e.output.decode("utf-8"))
+        #raise e
+
+
+def getRouteDefaultIP():
+    cmd = "/sbin/ip route|awk '/default/ { print $3 }'"
+    output = subprocess.check_output(cmd, shell=True)
+    ip = output.decode().strip()
+    return ip
+
+
+if __name__ == "__main__":
+
+    defaultHost = getRouteDefaultIP()
+
+    parser = argparse.ArgumentParser(description="openqa testes trigger tool")
+    parser.add_argument("envs", metavar='FOO=BAR', type=str, nargs='*',
+            help="env vars of the running environment")
+
+    parser.add_argument("--fetch-iso", dest="fetch_iso", action="store_true",
+                       help="auto download the ISO, which match the BUILD num")
+
+    parser.add_argument('--latest-build', dest="latest_build", action="store_true",
+                       help="auto fetch the latest build date of deepin ISO, and store as BUILD env")
+
+    parser.add_argument('--host', default=defaultHost, type=str,
+                       help='openqa server host')
+
+    args = parser.parse_args()
+
+    HOST = args.host
+    FETCH_ISO = args.fetch_iso
+    LATEST_BUILD = args.latest_build
+    envs = args.envs
+
+    # ========== start ============= #
+    rawParams = " ".join(envs)
+    envs = initParams(rawParams)
+
+    if FETCH_ISO:
+        fetchISO(envs)
+
+    scheduledJobs(envs)
+
