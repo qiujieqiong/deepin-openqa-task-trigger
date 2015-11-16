@@ -122,7 +122,6 @@ def getLatestBuildDate(arch="amd64"):
     dailyLiveUrl = "http://cdimage/daily-live-sid"
     try:
         resp = request.urlopen(dailyLiveUrl)
-        print("back....")
         data = resp.read().decode("utf-8")
     except URLError as e:
         print("E: get latest build data error")
