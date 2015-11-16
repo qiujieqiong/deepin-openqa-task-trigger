@@ -150,8 +150,13 @@ def getLatestBuildDate(arch="amd64"):
 
 def fetchISO(envs):
     build = envs.get("BUILD")
-    os.system("curl http://cdimage/daily-live-sid/%s/deepin-sid-amd64.iso \
-            -o %s/deepin-sid-amd64_%s.iso" % (build, ISO_FACTORY, build))
+    name = "deepin-sid-amd64_%s.iso" % build
+    path = "%s/%s" % (ISO_FACTORY, name)
+    if os.path.exists(path):
+        print ("ISO (%s) exists, skip download." % name)
+    else:
+        os.system("curl http://cdimage/daily-live-sid/%s/deepin-sid-amd64.iso \
+            -o %s" % (build, path))
 
 
 def scheduledJobs(params):
