@@ -23,6 +23,4 @@ function start(){
 
 }
 
-start
-
-
+start $@
