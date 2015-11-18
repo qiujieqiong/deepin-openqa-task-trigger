@@ -20,6 +20,7 @@ CLIENT_PATH = "/usr/share/openqa/script/client"
 ISOTOVIDEO_PATH = "/usr/lib/os-autoinst/isotovideo"
 DEFAULT_ENVS_CONF_PATH = "/etc/openqa/deepin.ini"
 ISO_FACTORY = "/var/lib/openqa/share/factory/iso"
+TESTCASE_DEFAULT_PATH = "/var/lib/openqa/share/tests/deepin"
 
 """
 http://cdimage  is a iso warehouse base on internal network
@@ -157,6 +158,15 @@ def fetchISO(envs):
         os.system("curl http://cdimage/daily-live-sid/%s/deepin-sid-amd64.iso \
             -o %s" % (build, path))
 
+def fetchTestcase(envs):
+    gitDir = TESTCASE_DEFAULT_PATH
+    if os.path.exists(gitDir):
+        os.chdir(gitDir)
+        os.system("git pull -r origin master")
+    else:
+        print("E: testcase dir(%s) not found" % gitDir)
+        quit(1)
+
 
 def scheduledJobs(params):
     cmds = []
@@ -238,6 +248,9 @@ if __name__ == "__main__":
     parser.add_argument("--fetch-iso", dest="fetch_iso", action="store_true",
                        help="auto download the ISO, which match the BUILD num")
 
+    parser.add_argument("--fetch-testcase", dest="fetch_testcase", action="store_true",
+                       help="auto fetch latest testcase")
+
     parser.add_argument('--latest-build', dest="latest_build", action="store_true",
                        help="auto fetch the latest build date of deepin ISO, and store as BUILD env")
 
@@ -249,6 +262,7 @@ if __name__ == "__main__":
     HOST = args.host
     FETCH_ISO = args.fetch_iso
     LATEST_BUILD = args.latest_build
+    FETCH_TESTCASE = args.fetch_testcase
     envs = args.envs
 
     # ========== start ============= #
@@ -257,6 +271,9 @@ if __name__ == "__main__":
 
     if FETCH_ISO:
         fetchISO(envs)
+
+    if FETCH_TESTCASE:
+        fetchTestcase(envs)
 
     scheduledJobs(envs)
 
